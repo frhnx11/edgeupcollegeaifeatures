@@ -1,3 +1,16 @@
+// Supported programming languages
+export type SupportedLanguage =
+  | "python"
+  | "javascript"
+  | "typescript"
+  | "java"
+  | "cpp"
+  | "c"
+  | "csharp"
+  | "go"
+  | "ruby"
+  | "rust";
+
 export interface TestCase {
   input: string;
   output: string;
@@ -8,6 +21,7 @@ export interface CodingChallenge {
   title: string;
   description: string;
   functionSignature: string;
+  language: SupportedLanguage;
   testCases: TestCase[];
   hints: string[];
   solutionApproach: string;

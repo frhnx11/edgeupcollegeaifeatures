@@ -5,20 +5,54 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-const SYSTEM_PROMPT = `You are James, an AI interviewer conducting a 7-question mock interview.
+const SYSTEM_PROMPT = `You are James, an AI interviewer conducting a mock interview.
+
+Interview Flow:
+1. Start with a brief greeting, then IMMEDIATELY use the ask_language_preference tool
+2. After user selects language, remember it for all coding challenges
+3. Proceed with 5-6 interview questions, including 1-2 coding challenges
+
+IMPORTANT - At the very start:
+- Use the ask_language_preference tool to let user choose their language
+- Do NOT ask for language in text - use the tool instead
+
+When using show_coding_challenge:
+- ALWAYS set the "language" parameter to match the user's selected preference
+- Generate function signatures in their preferred language syntax
+- Only use 1-2 coding challenges total in the entire interview
+
+IMPORTANT - When user completes a coding challenge:
+- If you see "[User completed the coding challenge successfully]", briefly congratulate them and move on to a DIFFERENT question (behavioral, technical, etc.)
+- Do NOT give another coding challenge immediately after one is completed
+- Do NOT repeat the same challenge
 
 Guidelines:
 - Keep responses to 1-2 short sentences max
-- Brief acknowledgment of their answer, then next question
-- Track question count internally
-- Include 1-2 coding challenges during the interview (use the show_coding_challenge tool)
-- Coding challenges should be easy/entry-level Python problems
-- After 7 questions: Give brief overall feedback
+- Brief acknowledgment of answers, then next question
+- Coding challenges should be easy/entry-level problems
+- After all questions: Give brief overall feedback
 
-Start with a one-sentence intro and your first question.`;
+Start with a greeting and use ask_language_preference tool.`;
 
-// Tool definition for coding challenges
+// Tool definitions
 const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "ask_language_preference",
+      description: "Show language selection buttons to the user. Use this at the very start of the interview to let the user choose their preferred programming language.",
+      parameters: {
+        type: "object",
+        properties: {
+          spoken_prompt: {
+            type: "string",
+            description: "What James says to ask for language preference (1 sentence, e.g., 'Which programming language would you like to use today?')",
+          },
+        },
+        required: ["spoken_prompt"],
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -41,7 +75,12 @@ const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           },
           function_signature: {
             type: "string",
-            description: "The exact Python function signature the user should implement, e.g. 'def add_numbers(a: int, b: int) -> int:'",
+            description: "The function signature the user should implement. Use Python syntax by default, e.g. 'def add_numbers(a: int, b: int) -> int:'",
+          },
+          language: {
+            type: "string",
+            enum: ["python", "javascript", "typescript", "java", "cpp", "c", "csharp", "go", "ruby", "rust"],
+            description: "Programming language for the challenge. Default to 'python' unless the user specifies otherwise.",
           },
           test_cases: {
             type: "array",
@@ -53,7 +92,7 @@ const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
               },
               required: ["input", "output"],
             },
-            description: "Example input/output test cases",
+            description: "Test cases with input/output. IMPORTANT: Use positional arguments only (e.g., '3, 5' not 'a = 3, b = 5'). For arrays: '[1, 2, 3], 5'. For strings: '\"hello\"'.",
           },
           hints: {
             type: "array",
@@ -125,27 +164,44 @@ export async function POST(request: NextRequest) {
     if (message.tool_calls && message.tool_calls.length > 0) {
       const toolCall = message.tool_calls[0];
 
-      if (toolCall.type === "function" && toolCall.function.name === "show_coding_challenge") {
+      if (toolCall.type === "function") {
         const args = JSON.parse(toolCall.function.arguments);
 
-        console.log("\n=== TOOL CALL: show_coding_challenge ===");
-        console.log("Spoken intro:", args.spoken_intro);
-        console.log("Challenge title:", args.title);
+        // Handle ask_language_preference tool
+        if (toolCall.function.name === "ask_language_preference") {
+          console.log("\n=== TOOL CALL: ask_language_preference ===");
+          console.log("Spoken prompt:", args.spoken_prompt);
 
-        return NextResponse.json({
-          content: args.spoken_intro,
-          tool_call: {
-            name: "show_coding_challenge",
-            challenge: {
-              title: args.title,
-              description: args.description,
-              functionSignature: args.function_signature,
-              testCases: args.test_cases,
-              hints: args.hints || [],
-              solutionApproach: args.solution_approach || "",
+          return NextResponse.json({
+            content: args.spoken_prompt,
+            tool_call: {
+              name: "ask_language_preference",
             },
-          },
-        });
+          });
+        }
+
+        // Handle show_coding_challenge tool
+        if (toolCall.function.name === "show_coding_challenge") {
+          console.log("\n=== TOOL CALL: show_coding_challenge ===");
+          console.log("Spoken intro:", args.spoken_intro);
+          console.log("Challenge title:", args.title);
+
+          return NextResponse.json({
+            content: args.spoken_intro,
+            tool_call: {
+              name: "show_coding_challenge",
+              challenge: {
+                title: args.title,
+                description: args.description,
+                functionSignature: args.function_signature,
+                language: args.language || "python",
+                testCases: args.test_cases,
+                hints: args.hints || [],
+                solutionApproach: args.solution_approach || "",
+              },
+            },
+          });
+        }
       }
     }
 

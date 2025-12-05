@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { CodingChallenge, EvaluationResult, CodeOutput } from "../lib/codingTypes";
+import { CodingChallenge, EvaluationResult, CodeOutput, SupportedLanguage } from "../lib/codingTypes";
+import { LANGUAGE_CONFIG } from "../lib/languageConfig";
 import CodeEditor from "./CodeEditor";
 import QuestionDisplay from "./QuestionDisplay";
 import OutputPanel from "./OutputPanel";
@@ -9,26 +10,51 @@ import OutputPanel from "./OutputPanel";
 interface CodingPanelProps {
   challenge: CodingChallenge;
   visible: boolean;
-  onHint: (code: string) => void;
-  onRun: (code: string) => void;
+  onHint: (code: string, language: SupportedLanguage) => void;
+  onRun: (code: string, language: SupportedLanguage) => void;
   isRequestingHint: boolean;
   isRunning: boolean;
   feedback: EvaluationResult | null;
   output: CodeOutput | null;
 }
 
-// Helper to generate default code template
-function generateDefaultCode(functionSignature?: string): string {
-  if (functionSignature) {
-    return `${functionSignature}
-    # Write your code here
-    pass
-`;
+// Helper to generate default code template based on challenge
+// AI sends function signature in the correct language syntax
+function generateDefaultCode(challenge: CodingChallenge): string {
+  const { language, functionSignature: rawSignature } = challenge;
+
+  if (!rawSignature) {
+    return "// Write your code here";
   }
-  return `def solution():
-    # Write your code here
-    pass
-`;
+
+  // Clean up signature: remove trailing semicolons/whitespace that AI might include
+  const functionSignature = rawSignature.replace(/[;\s]+$/, "");
+
+  // Wrap with the appropriate template for each language
+  switch (language) {
+    case "python":
+      return `${functionSignature}\n    # Write your code here\n    pass`;
+    case "ruby":
+      return `${functionSignature}\n    # Write your code here\n    \nend`;
+    case "javascript":
+      return `${functionSignature} {\n    // Write your code here\n    \n}`;
+    case "typescript":
+      return `${functionSignature} {\n    // Write your code here\n    \n}`;
+    case "java":
+      return `public class Solution {\n    ${functionSignature} {\n        // Write your code here\n        return 0;\n    }\n}`;
+    case "cpp":
+      return `#include <iostream>\n#include <vector>\n#include <string>\nusing namespace std;\n\n${functionSignature} {\n    // Write your code here\n    return 0;\n}`;
+    case "c":
+      return `#include <stdio.h>\n#include <stdlib.h>\n\n${functionSignature} {\n    // Write your code here\n    return 0;\n}`;
+    case "csharp":
+      return `using System;\n\npublic class Solution {\n    ${functionSignature} {\n        // Write your code here\n        return 0;\n    }\n}`;
+    case "go":
+      return `package main\n\nimport "fmt"\n\n${functionSignature} {\n    // Write your code here\n    return 0\n}`;
+    case "rust":
+      return `${functionSignature} {\n    // Write your code here\n    0\n}`;
+    default:
+      return `${functionSignature}\n// Write your code here`;
+  }
 }
 
 export default function CodingPanel({
@@ -41,10 +67,13 @@ export default function CodingPanel({
   feedback,
   output,
 }: CodingPanelProps) {
+  // Language is locked to what AI specified (user chose at interview start)
+  const language = challenge.language || "python";
+
   // Memoize default code based on challenge
   const defaultCode = useMemo(
-    () => generateDefaultCode(challenge.functionSignature),
-    [challenge.functionSignature]
+    () => generateDefaultCode(challenge),
+    [challenge]
   );
 
   const [code, setCode] = useState<string>(defaultCode);
@@ -96,12 +125,17 @@ export default function CodingPanel({
         ${getAnimationClasses()}
       `}
     >
-      {/* Header with Run and Submit Buttons */}
+      {/* Header with Language Badge, Run and Hint Buttons */}
       <div className="flex justify-between items-center mb-3">
-        <h2 className="text-lg font-semibold text-slate-700">Coding Challenge</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold text-slate-700">Coding Challenge</h2>
+          <span className="px-3 py-1 bg-blue-100 text-blue-700 text-sm font-medium rounded-full">
+            {LANGUAGE_CONFIG[language]?.name || language}
+          </span>
+        </div>
         <div className="flex gap-2">
           <button
-            onClick={() => onRun(code)}
+            onClick={() => onRun(code, language)}
             disabled={isDisabled}
             className="px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-slate-300
                        text-white font-medium rounded-lg shadow-md transition-colors
@@ -123,7 +157,7 @@ export default function CodingPanel({
             )}
           </button>
           <button
-            onClick={() => onHint(code)}
+            onClick={() => onHint(code, language)}
             disabled={isDisabled}
             className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-300
                        text-white font-medium rounded-lg shadow-md transition-colors
@@ -157,7 +191,7 @@ export default function CodingPanel({
         <div className="h-[65%] min-h-0 flex gap-3">
           {/* Code Editor */}
           <div className="w-1/2 min-w-0">
-            <CodeEditor value={code} onChange={setCode} disabled={isDisabled} />
+            <CodeEditor value={code} onChange={setCode} language={language} disabled={isDisabled} />
           </div>
 
           {/* Output Panel */}

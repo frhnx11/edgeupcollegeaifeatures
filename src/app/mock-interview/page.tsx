@@ -7,9 +7,10 @@ import { Environment } from "@react-three/drei";
 import CharacterModel from "./components/CharacterModel";
 import SpeechBubble from "./components/SpeechBubble";
 import CodingPanel from "./components/CodingPanel";
+import LanguageButtons from "./components/LanguageButtons";
 import { useCodingChallenge } from "./hooks/useCodingChallenge";
-import { usePyodide } from "./hooks/usePyodide";
-import { CodingChallenge } from "./lib/codingTypes";
+import { CodingChallenge, SupportedLanguage, CodeOutput } from "./lib/codingTypes";
+import { LANGUAGE_CONFIG } from "./lib/languageConfig";
 
 // Scene configuration
 const CAMERA_POSITION: [number, number, number] = [0.3, 0, 3.2];
@@ -33,7 +34,7 @@ interface ChatAPIResponse {
   content: string;
   tool_call: {
     name: string;
-    challenge: CodingChallenge;
+    challenge?: CodingChallenge;
   } | null;
 }
 
@@ -45,17 +46,16 @@ export default function MockInterviewPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [textInput, setTextInput] = useState("");
   const [isRequestingHint, setIsRequestingHint] = useState(false);
+  const [showLanguageButtons, setShowLanguageButtons] = useState(false);
 
   // Refs to track current state in callbacks
   const messagesRef = useRef<Message[]>([]);
   const pendingChallengeRef = useRef<CodingChallenge | null>(null);
+  const pendingLanguagePromptRef = useRef(false);
   const audioEndHandledRef = useRef(false);
 
   // Coding challenge hook
-  const { codingState, startChallenge, submitCode, endChallenge, setOutput, setIsRunning } = useCodingChallenge();
-
-  // Pyodide hook for code execution
-  const { runWithTestCases, isLoading: isPyodideLoading } = usePyodide();
+  const { codingState, startChallenge, endChallenge, setOutput, setIsRunning } = useCodingChallenge();
 
   // Fetch AI response from OpenAI
   const fetchAIResponse = useCallback(async (chatMessages: Message[], disableTools = false): Promise<ChatAPIResponse> => {
@@ -71,7 +71,8 @@ export default function MockInterviewPage() {
   }, []);
 
   // Handle user input (from text)
-  const handleUserInput = useCallback(async (input: string) => {
+  // disableTools: prevents AI from calling tools (e.g., after completing a challenge)
+  const handleUserInput = useCallback(async (input: string, disableTools = false) => {
     if (!input.trim()) {
       setState("listening");
       return;
@@ -86,8 +87,8 @@ export default function MockInterviewPage() {
     setMessages(updatedMessages);
 
     try {
-      // Get AI response
-      const response = await fetchAIResponse(updatedMessages);
+      // Get AI response (disable tools if specified to prevent immediate new challenge)
+      const response = await fetchAIResponse(updatedMessages, disableTools);
 
       console.log("=== FRONTEND: API Response ===");
       console.log("Content:", response.content);
@@ -100,7 +101,7 @@ export default function MockInterviewPage() {
       setMessages(finalMessages);
 
       // Check if AI called the coding challenge tool
-      if (response.tool_call && response.tool_call.name === "show_coding_challenge") {
+      if (response.tool_call && response.tool_call.name === "show_coding_challenge" && response.tool_call.challenge) {
         console.log("=== FRONTEND: Storing pending challenge ===");
         console.log("Challenge:", response.tool_call.challenge);
         pendingChallengeRef.current = response.tool_call.challenge;
@@ -145,9 +146,13 @@ export default function MockInterviewPage() {
       messagesRef.current = [openingMessage];
       setMessages([openingMessage]);
 
-      // Check if AI called the coding challenge tool
-      if (response.tool_call && response.tool_call.name === "show_coding_challenge") {
-        pendingChallengeRef.current = response.tool_call.challenge;
+      // Check if AI called a tool
+      if (response.tool_call) {
+        if (response.tool_call.name === "ask_language_preference") {
+          pendingLanguagePromptRef.current = true;
+        } else if (response.tool_call.name === "show_coding_challenge" && response.tool_call.challenge) {
+          pendingChallengeRef.current = response.tool_call.challenge;
+        }
       }
 
       // Speak the response
@@ -165,7 +170,7 @@ export default function MockInterviewPage() {
     setShowBubble(true);
   }, []);
 
-  // Called when audio ends - check for pending coding challenge
+  // Called when audio ends - check for pending actions
   const handleAudioEnd = useCallback(() => {
     // Prevent double execution
     if (audioEndHandledRef.current) {
@@ -175,11 +180,18 @@ export default function MockInterviewPage() {
     audioEndHandledRef.current = true;
 
     console.log("=== FRONTEND: Audio ended ===");
+    console.log("Pending language prompt:", pendingLanguagePromptRef.current);
     console.log("Pending challenge:", pendingChallengeRef.current);
     setShowBubble(false);
 
-    // Check if we have a pending coding challenge
-    if (pendingChallengeRef.current) {
+    // Check if we need to show language selection
+    if (pendingLanguagePromptRef.current) {
+      console.log("=== FRONTEND: Showing language buttons ===");
+      pendingLanguagePromptRef.current = false;
+      setShowLanguageButtons(true);
+      setState("listening"); // Keep in listening state while showing buttons
+    } else if (pendingChallengeRef.current) {
+      // Check if we have a pending coding challenge
       console.log("=== FRONTEND: Starting coding challenge ===");
       startChallenge(pendingChallengeRef.current);
       pendingChallengeRef.current = null;
@@ -192,24 +204,40 @@ export default function MockInterviewPage() {
     }
   }, [startChallenge, codingState.isActive]);
 
-  // Handle code run (execute with Pyodide)
-  const handleRunCode = useCallback(async (code: string) => {
+  // Handle language selection from buttons
+  const handleLanguageSelect = useCallback((language: SupportedLanguage) => {
+    console.log("=== FRONTEND: Language selected ===", language);
+    setShowLanguageButtons(false);
+
+    const langName = LANGUAGE_CONFIG[language]?.name || language;
+    handleUserInput(`[User selected ${langName} as their preferred programming language]`);
+  }, [handleUserInput]);
+
+  // Handle code run (execute with Judge0 API)
+  const handleRunCode = useCallback(async (code: string, language: SupportedLanguage) => {
     if (!codingState.challenge) return;
 
     setIsRunning(true);
     setOutput(null);
 
     try {
-      // Extract function name from signature (e.g., "def sum_of_two_numbers(a: int, b: int) -> int:" => "sum_of_two_numbers")
-      const signature = codingState.challenge.functionSignature;
-      const match = signature.match(/def\s+(\w+)\s*\(/);
-      const functionName = match ? match[1] : "solution";
+      // Call Judge0 API for code execution
+      const response = await fetch("/api/execute-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code,
+          language,
+          functionSignature: codingState.challenge.functionSignature,
+          testCases: codingState.challenge.testCases,
+        }),
+      });
 
-      const result = await runWithTestCases(
-        code,
-        functionName,
-        codingState.challenge.testCases
-      );
+      if (!response.ok) {
+        throw new Error("Code execution failed");
+      }
+
+      const result: CodeOutput = await response.json();
       setOutput(result);
 
       // Auto-detect success: if all tests passed, close challenge and continue
@@ -219,7 +247,8 @@ export default function MockInterviewPage() {
           // Wait briefly to show success, then continue interview
           setTimeout(() => {
             endChallenge();
-            handleUserInput("[User completed the coding challenge successfully - all tests passed]");
+            // Disable tools so AI moves to next question instead of another coding challenge
+            handleUserInput("[User completed the coding challenge successfully - all tests passed]", true);
           }, 2000);
         }
       }
@@ -234,23 +263,25 @@ export default function MockInterviewPage() {
     } finally {
       setIsRunning(false);
     }
-  }, [codingState.challenge, runWithTestCases, setOutput, setIsRunning, endChallenge, handleUserInput]);
+  }, [codingState.challenge, setOutput, setIsRunning, endChallenge, handleUserInput]);
 
   // Handle hint request - send code to AI for analysis
-  const handleHintRequest = useCallback(async (code: string) => {
+  const handleHintRequest = useCallback(async (code: string, language: SupportedLanguage) => {
     if (!codingState.challenge) return;
 
     setIsRequestingHint(true);
+
+    const langName = LANGUAGE_CONFIG[language]?.name || language;
 
     try {
       // Build a hint request message with the challenge and user's code
       const hintMessage = `[User is stuck and asking for a hint on the coding challenge]
 Challenge: ${codingState.challenge.title}
 Description: ${codingState.challenge.description}
-Function Signature: ${codingState.challenge.functionSignature}
+Language: ${langName}
 
 User's current code:
-\`\`\`python
+\`\`\`${language}
 ${code}
 \`\`\`
 
@@ -388,8 +419,14 @@ Keep it to 1-2 sentences max.`;
           />
         )}
 
-        {/* Text Input Box - hidden during coding mode */}
-        {state !== "idle" && state !== "loading" && state !== "coding" && (
+        {/* Language Selection Buttons */}
+        <LanguageButtons
+          visible={showLanguageButtons}
+          onSelect={handleLanguageSelect}
+        />
+
+        {/* Text Input Box - hidden during coding mode and language selection */}
+        {state !== "idle" && state !== "loading" && state !== "coding" && !showLanguageButtons && (
           <form
             onSubmit={handleTextSubmit}
             className="absolute bottom-4 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-30"

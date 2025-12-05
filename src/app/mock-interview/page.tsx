@@ -254,10 +254,7 @@ User's current code:
 ${code}
 \`\`\`
 
-Give a clever, concise hint. DO NOT give the solution directly. Instead:
-- Point to a specific concept or technique they should consider
-- Identify what's missing or incorrect in their approach
-- Be direct but not give away the answer
+Give a clever, indirect hint. DO NOT give the solution directly.
 Keep it to 1-2 sentences max.`;
 
       const userMessage: Message = { role: "user", content: hintMessage };

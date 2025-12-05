@@ -254,12 +254,11 @@ User's current code:
 ${code}
 \`\`\`
 
-Give a SUBTLE, PLAYFUL hint. DO NOT give the solution or be too direct. Instead:
-- Use analogies or metaphors
-- Ask a thought-provoking question
-- Give a tiny nudge in the right direction
-- Be encouraging and lighthearted
-Keep it to 1-2 short sentences max.`;
+Give a clever, concise hint. DO NOT give the solution directly. Instead:
+- Point to a specific concept or technique they should consider
+- Identify what's missing or incorrect in their approach
+- Be direct but not give away the answer
+Keep it to 1-2 sentences max.`;
 
       const userMessage: Message = { role: "user", content: hintMessage };
       const hintMessages = [...messagesRef.current, userMessage];
